@@ -12,20 +12,11 @@ import com.pb.util.ScriptContext;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 关于只创建一次，参考了如下
- * https://blog.csdn.net/iter_zc/article/details/40543365/
- * <p>
  * @author PengBin
  */
 public class JsonValueMappingSerializer extends JsonSerializer<Object> implements ContextualSerializer {
-
-    private static ConcurrentHashMap<String, Object> cache = new ConcurrentHashMap<>(128);
-
-    private static ConcurrentHashMap<String, SpinStatus> raceUtil = new ConcurrentHashMap<>();
-
 
     private JsonValueMapping jsonValueMapping;
 
@@ -41,47 +32,21 @@ public class JsonValueMappingSerializer extends JsonSerializer<Object> implement
     public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
         if (value == null) {
             gen.writeNull();
-            return;
         }
 
         String script = jsonValueMapping.script();
         if (script.trim().length() == 0) {
             gen.writeObject(value);
-            return;
         }
 
-        String name = jsonValueMapping.value();
-        Object result;
-        boolean cacheable = jsonValueMapping.cacheable();
-        if (cacheable) {
-            String key = script + value;
-            result = cache.get(key);
-            if (result == null) {
-                SpinStatus spinStatus = new SpinStatus();
-                SpinStatus oldSpinStatus = raceUtil.putIfAbsent(key, spinStatus);
+        // TODO 此处可以做优化，可以尝试根据Script和Value做缓存处理
+        ScriptContext scriptContext = new ScriptContext(script);
+        Map<String, Object> bindings = new HashMap<>(1);
+        bindings.put("arg0", value);
 
-                // 只有第一个线程访问到的时候为 null
-                if (oldSpinStatus == null) {
-
-                    result = evaluateScriptExpression(script, value);
-                    if (result != null) {
-                        cache.putIfAbsent(key, result);
-                    }
-
-                    spinStatus.released = true;
-                } else {
-                    // 其他情况下，等待
-                    while (!oldSpinStatus.released) {
-                    }
-                }
-
-                result = cache.get(key);
-            }
-        } else {
-            result = evaluateScriptExpression(script, value);
-        }
-
+        Object result = scriptContext.evaluateScriptExpression(bindings);
         String text = result == null ? null : result.toString();
+        String name = jsonValueMapping.value();
         if (name.trim().length() == 0) {
             gen.writeObject(text);
         } else {
@@ -95,6 +60,7 @@ public class JsonValueMappingSerializer extends JsonSerializer<Object> implement
 
     @Override
     public JsonSerializer<?> createContextual(SerializerProvider prov, BeanProperty property) throws JsonMappingException {
+        System.out.println("---------------------");
         if (property == null) {
             return prov.findNullValueSerializer(null);
         }
@@ -108,27 +74,5 @@ public class JsonValueMappingSerializer extends JsonSerializer<Object> implement
             return new JsonValueMappingSerializer(annotation);
         }
         return prov.findValueSerializer(property.getType(), property);
-    }
-
-
-    /**
-     * 执行脚本
-     * @param script
-     * @param value
-     * @return
-     */
-    private Object evaluateScriptExpression(String script, Object value) {
-        ScriptContext scriptContext = new ScriptContext(script);
-        Map<String, Object> bindings = new HashMap<>(1);
-        bindings.put("arg0", value);
-
-        return scriptContext.evaluateScriptExpression(bindings);
-    }
-
-    /**
-     * 自旋类
-     */
-    private static class SpinStatus {
-        volatile boolean released;
     }
 }
