@@ -28,4 +28,10 @@ public @interface JsonValueMapping {
      * @return
      */
     String script() default "";
+
+    /**
+     * 是否可缓存
+     * @return
+     */
+    boolean cacheable() default true;
 }

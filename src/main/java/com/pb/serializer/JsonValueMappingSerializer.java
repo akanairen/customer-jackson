@@ -12,11 +12,14 @@ import com.pb.util.ScriptContext;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * @author PengBin
  */
 public class JsonValueMappingSerializer extends JsonSerializer<Object> implements ContextualSerializer {
+
+    private static ConcurrentHashMap<String, Object> cache = new ConcurrentHashMap<>(128);
 
     private JsonValueMapping jsonValueMapping;
 
@@ -32,21 +35,33 @@ public class JsonValueMappingSerializer extends JsonSerializer<Object> implement
     public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
         if (value == null) {
             gen.writeNull();
+            return;
         }
 
         String script = jsonValueMapping.script();
         if (script.trim().length() == 0) {
             gen.writeObject(value);
+            return;
         }
 
-        // TODO 此处可以做优化，可以尝试根据Script和Value做缓存处理
-        ScriptContext scriptContext = new ScriptContext(script);
-        Map<String, Object> bindings = new HashMap<>(1);
-        bindings.put("arg0", value);
-
-        Object result = scriptContext.evaluateScriptExpression(bindings);
-        String text = result == null ? null : result.toString();
         String name = jsonValueMapping.value();
+        Object result;
+        boolean cacheable = jsonValueMapping.cacheable();
+        if (cacheable) {
+            String key = script + value;
+            result = cache.get(key);
+            if (result == null) {
+
+                result = evaluateScriptExpression(script, value);
+                if (result != null) {
+                    cache.putIfAbsent(key, result);
+                }
+            }
+        } else {
+            result = evaluateScriptExpression(script, value);
+        }
+
+        String text = result == null ? null : result.toString();
         if (name.trim().length() == 0) {
             gen.writeObject(text);
         } else {
@@ -60,7 +75,6 @@ public class JsonValueMappingSerializer extends JsonSerializer<Object> implement
 
     @Override
     public JsonSerializer<?> createContextual(SerializerProvider prov, BeanProperty property) throws JsonMappingException {
-        System.out.println("---------------------");
         if (property == null) {
             return prov.findNullValueSerializer(null);
         }
@@ -74,5 +88,20 @@ public class JsonValueMappingSerializer extends JsonSerializer<Object> implement
             return new JsonValueMappingSerializer(annotation);
         }
         return prov.findValueSerializer(property.getType(), property);
+    }
+
+
+    /**
+     * 执行脚本
+     * @param script
+     * @param value
+     * @return
+     */
+    private Object evaluateScriptExpression(String script, Object value) {
+        ScriptContext scriptContext = new ScriptContext(script);
+        Map<String, Object> bindings = new HashMap<>(1);
+        bindings.put("arg0", value);
+
+        return scriptContext.evaluateScriptExpression(bindings);
     }
 }
