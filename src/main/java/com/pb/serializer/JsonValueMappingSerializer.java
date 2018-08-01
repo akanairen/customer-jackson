@@ -63,12 +63,16 @@ public class JsonValueMappingSerializer extends JsonSerializer<Object> implement
                 // 只有第一个线程访问到的时候为 null
                 if (oldSpinStatus == null) {
 
-                    result = evaluateScriptExpression(script, value);
-                    if (result != null) {
-                        cache.putIfAbsent(key, result);
+                    try {
+                        result = evaluateScriptExpression(script, value);
+                        if (result != null) {
+                            cache.putIfAbsent(key, result);
+                        }
+                    } catch (Exception e) {
+                        throw new RuntimeException("evaluateScriptExpression: " + script);
+                    } finally {
+                        spinStatus.released = true;
                     }
-
-                    spinStatus.released = true;
                 } else {
                     // 其他情况下，等待
                     while (!oldSpinStatus.released) {
